@@ -1,0 +1,110 @@
+---
+- name: Install and Configure Grafana and Prometheus
+  hosts: all
+  become: true
+
+  vars:
+    grafana_version: "8.4.5"
+    prometheus_version: "2.37.0"
+
+  tasks:
+    - name: Install dependencies
+      apt:
+        name:
+          - apt-transport-https
+          - software-properties-common
+          - wget
+          - tar
+        state: present
+
+    - name: Add Grafana GPG key
+      apt_key:
+        url: https://packages.grafana.com/gpg.key
+        state: present
+
+    - name: Add Grafana repository
+      apt_repository:
+        repo: deb https://packages.grafana.com/oss/deb stable main
+        state: present
+
+    - name: Install Grafana
+      apt:
+        name: grafana={{ grafana_version }}
+        state: present
+        update_cache: yes
+        allow_downgrade: yes
+
+    - name: Download and install Prometheus
+      unarchive:
+        src: https://github.com/prometheus/prometheus/releases/download/v{{ prometheus_version }}/prometheus-{{ prometheus_version }}.linux-amd64.tar.gz
+        dest: /usr/local
+        remote_src: yes
+        creates: /usr/local/prometheus-{{ prometheus_version }}.linux-amd64
+
+    - name: Create Prometheus symlink
+      file:
+        src: /usr/local/prometheus-{{ prometheus_version }}.linux-amd64
+        dest: /usr/local/prometheus
+        state: link
+
+    - name: Create Prometheus systemd service
+      template:
+        src: prometheus.service.j2
+        dest: /etc/systemd/system/prometheus.service
+
+    - name: Configure Prometheus
+      template:
+        src: prometheus.yml.j2
+        dest: /usr/local/prometheus/prometheus.yml
+
+    - name: Configure Grafana
+      template:
+        src: grafana.ini.j2
+        dest: /etc/grafana/grafana.ini
+
+    - name: Configure Grafana datasources
+      template:
+        src: datasource.yml.j2
+        dest: /etc/grafana/provisioning/datasources/datasource.yml
+
+    - name: Reload systemd to apply changes
+      systemd:
+        daemon_reload: yes
+
+    - name: Enable and start Prometheus
+      systemd:
+        name: prometheus
+        enabled: yes
+        state: started
+
+    - name: Enable and start Grafana
+      systemd:
+        name: grafana-server
+        enabled: yes
+        state: started
+
+    - name: Create Grafana dashboards directory
+      file:
+        path: /var/lib/grafana/dashboards
+        state: directory
+        mode: '0755'
+        owner: grafana
+        group: grafana
+
+    - name: Copy Grafana dashboard JSON file
+      copy:
+        src: templates/dashboard_story.json
+        dest: /var/lib/grafana/dashboards/dashboard_story.json
+        owner: grafana
+        group: grafana
+        mode: '0644'
+
+    - name: Configure Grafana dashboard provisioning
+      template:
+        src: dashboard.yml.j2
+        dest: /etc/grafana/provisioning/dashboards/dashboard.yml
+
+    - name: Restart Grafana to apply new configuration
+      systemd:
+        name: grafana-server
+        state: restarted
